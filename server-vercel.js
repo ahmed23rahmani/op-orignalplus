@@ -29,6 +29,21 @@ let categories = [
   { _id: '2', name: 'sacoches', description: 'Sacoches élégantes' }
 ];
 
+// Utilitaires: dédoublonnage et plafonnement à 50 produits
+function dedupeAndCapProducts(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const product of list) {
+    const id = product && product._id ? product._id : JSON.stringify(product);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(product);
+    if (result.length >= 50) break;
+  }
+  return result;
+}
+
 // Routes API
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Serveur Vercel opérationnel' });
@@ -36,6 +51,8 @@ app.get('/api/health', (req, res) => {
 
 // Produits
 app.get('/api/products', (req, res) => {
+  // Stabiliser: dédoublonner et plafonner à 50
+  products = dedupeAndCapProducts(products);
   res.json({ success: true, data: products });
 });
 
@@ -47,6 +64,7 @@ app.post('/api/products', (req, res) => {
       createdAt: new Date()
     };
     products.push(newProduct);
+    products = dedupeAndCapProducts(products);
     res.json({ success: true, data: newProduct });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -58,6 +76,7 @@ app.put('/api/products/:id', (req, res) => {
     const index = products.findIndex(p => p._id === req.params.id);
     if (index !== -1) {
       products[index] = { ...products[index], ...req.body, updatedAt: new Date() };
+      products = dedupeAndCapProducts(products);
       res.json({ success: true, data: products[index] });
     } else {
       res.status(404).json({ success: false, error: 'Produit non trouvé' });
@@ -72,6 +91,7 @@ app.delete('/api/products/:id', (req, res) => {
     const index = products.findIndex(p => p._id === req.params.id);
     if (index !== -1) {
       const deletedProduct = products.splice(index, 1)[0];
+      products = dedupeAndCapProducts(products);
       res.json({ success: true, data: deletedProduct });
     } else {
       res.status(404).json({ success: false, error: 'Produit non trouvé' });

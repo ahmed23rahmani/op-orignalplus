@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
   "version": 2,
   "builds": [
@@ -32,3 +33,39 @@
     "NODE_ENV": "production"
   }
 }
+=======
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server-vercel.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "frontend/**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/server-vercel.js"
+    },
+    {
+      "src": "/admin",
+      "dest": "/frontend/admin/index.html"
+    },
+    {
+      "src": "/",
+      "dest": "/frontend/client/index.html"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/frontend/$1"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}
+>>>>>>> 8caf11544141f039e68816aed69f1eb89e7940e7
