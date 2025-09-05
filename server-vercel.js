@@ -1,6 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const connectDB = require('./lib/mongodb');
+const Product = require('./models/Product');
+const Order = require('./models/Order');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,10 +24,10 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Données en mémoire (comme server-test-local.js)
-let products = [];
+// Connexion à MongoDB Atlas
+connectDB().catch(console.error);
 
-let orders = [];
+// Données en mémoire pour les catégories (statiques)
 let categories = [
   { _id: '1', name: 'chaussures', description: 'Chaussures de qualité' },
   { _id: '2', name: 'sacoches', description: 'Sacoches élégantes' }
@@ -143,120 +146,145 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Serveur Vercel opérationnel' });
 });
 
-// Produits
-app.get('/api/products', (req, res) => {
-  // Stabiliser et filtrer actifs (prod)
-  products = dedupeAndCapProducts(products);
-  const data = IS_PROD ? products.filter(p => p.isActive).slice(0, 50) : products;
-  res.json({ success: true, data });
+// Produits - Récupération depuis MongoDB
+app.get('/api/products', async (req, res) => {
+  try {
+    const activeProducts = await Product.find({ isActive: true })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json({ success: true, data: activeProducts });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des produits:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
 });
 
-app.post('/api/products', (req, res) => {
+app.post('/api/products', async (req, res) => {
   try {
     if (IS_PROD) return res.status(403).json({ success: false, error: 'Ecriture désactivée en production' });
-    const newProduct = {
+    
+    const newProduct = new Product({
       _id: Date.now().toString(),
-      ...req.body,
-      createdAt: new Date()
-    };
-    products.push(newProduct);
-    products = dedupeAndCapProducts(products);
-    res.json({ success: true, data: newProduct });
+      ...req.body
+    });
+    
+    const savedProduct = await newProduct.save();
+    res.json({ success: true, data: savedProduct });
   } catch (error) {
+    console.error('Erreur lors de la création du produit:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/products/:id', (req, res) => {
+app.put('/api/products/:id', async (req, res) => {
   try {
     if (IS_PROD) return res.status(403).json({ success: false, error: 'Ecriture désactivée en production' });
-    const index = products.findIndex(p => p._id === req.params.id);
-    if (index !== -1) {
-      products[index] = { ...products[index], ...req.body, updatedAt: new Date() };
-      products = dedupeAndCapProducts(products);
-      res.json({ success: true, data: products[index] });
-    } else {
-      res.status(404).json({ success: false, error: 'Produit non trouvé' });
+    
+    const updatedProduct = await Product.findOneAndUpdate(
+      { _id: req.params.id },
+      { ...req.body, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+    
+    if (!updatedProduct) {
+      return res.status(404).json({ success: false, error: 'Produit non trouvé' });
     }
+    
+    res.json({ success: true, data: updatedProduct });
   } catch (error) {
+    console.error('Erreur lors de la mise à jour du produit:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.delete('/api/products/:id', (req, res) => {
+app.delete('/api/products/:id', async (req, res) => {
   try {
     if (IS_PROD) return res.status(403).json({ success: false, error: 'Ecriture désactivée en production' });
-    const index = products.findIndex(p => p._id === req.params.id);
-    if (index !== -1) {
-      const deletedProduct = products.splice(index, 1)[0];
-      products = dedupeAndCapProducts(products);
-      res.json({ success: true, data: deletedProduct });
-    } else {
-      res.status(404).json({ success: false, error: 'Produit non trouvé' });
+    
+    const deletedProduct = await Product.findOneAndDelete({ _id: req.params.id });
+    
+    if (!deletedProduct) {
+      return res.status(404).json({ success: false, error: 'Produit non trouvé' });
     }
+    
+    res.json({ success: true, data: deletedProduct });
   } catch (error) {
+    console.error('Erreur lors de la suppression du produit:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Commandes
-app.get('/api/orders', (req, res) => {
-  res.json({ success: true, data: orders });
+// Commandes - Récupération depuis MongoDB
+app.get('/api/orders', async (req, res) => {
+  try {
+    const allOrders = await Order.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: allOrders });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des commandes:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
+  }
 });
 
-app.get('/api/orders/:id', (req, res) => {
+app.get('/api/orders/:id', async (req, res) => {
   try {
-    const order = orders.find(o => o._id === req.params.id);
+    const order = await Order.findById(req.params.id);
     if (order) {
       res.json({ success: true, data: order });
     } else {
       res.status(404).json({ success: false, error: 'Commande non trouvée' });
     }
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur lors de la récupération de la commande:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   try {
-    const newOrder = {
+    const newOrder = new Order({
       _id: Date.now().toString(),
       ...req.body,
-      status: 'pending',
-      createdAt: new Date()
-    };
-    orders.push(newOrder);
-    res.json({ success: true, data: newOrder });
+      status: 'pending'
+    });
+    
+    const savedOrder = await newOrder.save();
+    res.json({ success: true, data: savedOrder });
   } catch (error) {
+    console.error('Erreur lors de la création de la commande:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/admin/orders/:id/status', (req, res) => {
+app.put('/api/admin/orders/:id/status', async (req, res) => {
   try {
-    const order = orders.find(o => o._id === req.params.id);
-    if (order) {
-      order.status = req.body.status;
-      order.updatedAt = new Date();
-      res.json({ success: true, data: order });
-    } else {
-      res.status(404).json({ success: false, error: 'Commande non trouvée' });
+    const updatedOrder = await Order.findOneAndUpdate(
+      { _id: req.params.id },
+      { status: req.body.status, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+    
+    if (!updatedOrder) {
+      return res.status(404).json({ success: false, error: 'Commande non trouvée' });
     }
+    
+    res.json({ success: true, data: updatedOrder });
   } catch (error) {
+    console.error('Erreur lors de la mise à jour du statut:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.delete('/api/orders/:id', (req, res) => {
+app.delete('/api/orders/:id', async (req, res) => {
   try {
-    const index = orders.findIndex(o => o._id === req.params.id);
-    if (index !== -1) {
-      const deletedOrder = orders.splice(index, 1)[0];
-      res.json({ success: true, data: deletedOrder });
-    } else {
-      res.status(404).json({ success: false, error: 'Commande non trouvée' });
+    const deletedOrder = await Order.findOneAndDelete({ _id: req.params.id });
+    
+    if (!deletedOrder) {
+      return res.status(404).json({ success: false, error: 'Commande non trouvée' });
     }
+    
+    res.json({ success: true, data: deletedOrder });
   } catch (error) {
+    console.error('Erreur lors de la suppression de la commande:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -308,31 +336,52 @@ app.delete('/api/categories/:id', (req, res) => {
   }
 });
 
-// Statistiques admin
-app.get('/api/admin/stats', (req, res) => {
+// Statistiques admin - Récupération depuis MongoDB
+app.get('/api/admin/stats', async (req, res) => {
   try {
+    const [totalProducts, totalOrders, ordersByStatus] = await Promise.all([
+      Product.countDocuments({ isActive: true }),
+      Order.countDocuments(),
+      Order.aggregate([
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ])
+    ]);
+
+    const statusCounts = ordersByStatus.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
     const stats = {
-      totalProducts: products.length,
-      totalOrders: orders.length,
+      totalProducts,
+      totalOrders,
       totalCategories: categories.length,
       ordersByStatus: {
-        pending: orders.filter(o => o.status === 'pending').length,
-        confirmed: orders.filter(o => o.status === 'confirmed').length,
-        shipped: orders.filter(o => o.status === 'shipped').length,
-        delivered: orders.filter(o => o.status === 'delivered').length
+        pending: statusCounts.pending || 0,
+        confirmed: statusCounts.confirmed || 0,
+        shipped: statusCounts.shipped || 0,
+        delivered: statusCounts.delivered || 0
       }
     };
+    
     res.json({ success: true, data: stats });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur lors de la récupération des statistiques:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
-// Export des commandes
-app.get('/api/admin/export/orders', (req, res) => {
+// Export des commandes - Récupération depuis MongoDB
+app.get('/api/admin/export/orders', async (req, res) => {
   try {
+    const orders = await Order.find().sort({ createdAt: -1 });
     const csvData = orders.map(order => {
-      return `${order._id},${order.customer?.firstName || ''},${order.customer?.lastName || ''},${order.customer?.phone || ''},${order.total},${order.status},${order.createdAt}`;
+      return `${order._id},${order.customer?.name || ''},${order.customer?.email || ''},${order.customer?.phone || ''},${order.total},${order.status},${order.createdAt}`;
     }).join('\n');
     
     const csvHeader = 'ID,Prénom,Nom,Téléphone,Total,Statut,Date\n';
