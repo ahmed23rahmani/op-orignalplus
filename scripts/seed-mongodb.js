@@ -1,6 +1,9 @@
-const connectDB = require('../lib/mongodb');
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+
+// URI MongoDB Atlas
+const MONGODB_URI = 'mongodb+srv://ahmed:kako1234@cluster0.9qpk4dw.mongodb.net/originalplus?retryWrites=true&w=majority&appName=Cluster0';
 
 // Données de test pour les produits
 const sampleProducts = [
@@ -96,7 +99,8 @@ async function seedDatabase() {
     console.log('🌱 Début du seeding MongoDB Atlas...');
     
     // Connexion à MongoDB
-    await connectDB();
+    await mongoose.connect(MONGODB_URI);
+    console.log('✅ Connexion MongoDB Atlas réussie');
     
     // Nettoyer les collections existantes
     await Product.deleteMany({});
