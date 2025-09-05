@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const mongoose = require('mongoose');
 const connectDB = require('./lib/mongodb');
 const Product = require('./models/Product');
 const Order = require('./models/Order');
@@ -25,7 +26,10 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Connexion à MongoDB Atlas
-connectDB().catch(console.error);
+connectDB().catch((error) => {
+  console.error('❌ Erreur de connexion MongoDB:', error.message);
+  console.log('🔄 Utilisation des données de fallback...');
+});
 
 // Données en mémoire pour les catégories (statiques)
 let categories = [
@@ -146,16 +150,26 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Serveur Vercel opérationnel' });
 });
 
-// Produits - Récupération depuis MongoDB
+// Produits - Récupération depuis MongoDB ou fallback
 app.get('/api/products', async (req, res) => {
   try {
-    const activeProducts = await Product.find({ isActive: true })
-      .sort({ createdAt: -1 })
-      .limit(50);
+    // Essayer MongoDB d'abord
+    if (mongoose.connection.readyState === 1) {
+      const activeProducts = await Product.find({ isActive: true })
+        .sort({ createdAt: -1 })
+        .limit(50);
+      return res.json({ success: true, data: activeProducts });
+    }
+    
+    // Fallback vers les données fixes
+    console.log('🔄 Utilisation des données de fallback pour les produits');
+    const activeProducts = FIXED_PRODUCTS.filter(p => p.isActive).slice(0, 50);
     res.json({ success: true, data: activeProducts });
   } catch (error) {
     console.error('Erreur lors de la récupération des produits:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
+    // Fallback en cas d'erreur
+    const activeProducts = FIXED_PRODUCTS.filter(p => p.isActive).slice(0, 50);
+    res.json({ success: true, data: activeProducts });
   }
 });
 
@@ -214,14 +228,21 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Commandes - Récupération depuis MongoDB
+// Commandes - Récupération depuis MongoDB ou fallback
 app.get('/api/orders', async (req, res) => {
   try {
-    const allOrders = await Order.find().sort({ createdAt: -1 });
-    res.json({ success: true, data: allOrders });
+    // Essayer MongoDB d'abord
+    if (mongoose.connection.readyState === 1) {
+      const allOrders = await Order.find().sort({ createdAt: -1 });
+      return res.json({ success: true, data: allOrders });
+    }
+    
+    // Fallback vers les données en mémoire
+    console.log('🔄 Utilisation des données de fallback pour les commandes');
+    res.json({ success: true, data: [] });
   } catch (error) {
     console.error('Erreur lors de la récupération des commandes:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
+    res.json({ success: true, data: [] });
   }
 });
 
@@ -336,43 +357,74 @@ app.delete('/api/categories/:id', (req, res) => {
   }
 });
 
-// Statistiques admin - Récupération depuis MongoDB
+// Statistiques admin - Récupération depuis MongoDB ou fallback
 app.get('/api/admin/stats', async (req, res) => {
   try {
-    const [totalProducts, totalOrders, ordersByStatus] = await Promise.all([
-      Product.countDocuments({ isActive: true }),
-      Order.countDocuments(),
-      Order.aggregate([
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 }
+    // Essayer MongoDB d'abord
+    if (mongoose.connection.readyState === 1) {
+      const [totalProducts, totalOrders, ordersByStatus] = await Promise.all([
+        Product.countDocuments({ isActive: true }),
+        Order.countDocuments(),
+        Order.aggregate([
+          {
+            $group: {
+              _id: '$status',
+              count: { $sum: 1 }
+            }
           }
+        ])
+      ]);
+
+      const statusCounts = ordersByStatus.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {});
+
+      const stats = {
+        totalProducts,
+        totalOrders,
+        totalCategories: categories.length,
+        ordersByStatus: {
+          pending: statusCounts.pending || 0,
+          confirmed: statusCounts.confirmed || 0,
+          shipped: statusCounts.shipped || 0,
+          delivered: statusCounts.delivered || 0
         }
-      ])
-    ]);
-
-    const statusCounts = ordersByStatus.reduce((acc, item) => {
-      acc[item._id] = item.count;
-      return acc;
-    }, {});
-
+      };
+      
+      return res.json({ success: true, data: stats });
+    }
+    
+    // Fallback vers les données fixes
+    console.log('🔄 Utilisation des données de fallback pour les statistiques');
     const stats = {
-      totalProducts,
-      totalOrders,
+      totalProducts: FIXED_PRODUCTS.filter(p => p.isActive).length,
+      totalOrders: 0,
       totalCategories: categories.length,
       ordersByStatus: {
-        pending: statusCounts.pending || 0,
-        confirmed: statusCounts.confirmed || 0,
-        shipped: statusCounts.shipped || 0,
-        delivered: statusCounts.delivered || 0
+        pending: 0,
+        confirmed: 0,
+        shipped: 0,
+        delivered: 0
       }
     };
     
     res.json({ success: true, data: stats });
   } catch (error) {
     console.error('Erreur lors de la récupération des statistiques:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
+    // Fallback en cas d'erreur
+    const stats = {
+      totalProducts: FIXED_PRODUCTS.filter(p => p.isActive).length,
+      totalOrders: 0,
+      totalCategories: categories.length,
+      ordersByStatus: {
+        pending: 0,
+        confirmed: 0,
+        shipped: 0,
+        delivered: 0
+      }
+    };
+    res.json({ success: true, data: stats });
   }
 });
 
